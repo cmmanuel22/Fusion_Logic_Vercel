@@ -6,7 +6,7 @@ import sys
 try:
     from flask import Flask, request, jsonify
     # CORRECTED IMPORT: Look for fusion_logic in the same (api) directory
-    from fusion_logic import hybrid_fusion, FusionOutput
+    from .fusion_logic import hybrid_fusion, FusionOutput
     from dataclasses import asdict
     import time
     print("INFO: All libraries imported successfully.")
