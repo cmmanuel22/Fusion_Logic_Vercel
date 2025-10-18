@@ -1,97 +1,96 @@
-# api/index.py
+# app/fusion_logic.py
 
-from flask import Flask, request, jsonify
-from app.fusion_logic import hybrid_fusion, FusionOutput
-from dataclasses import asdict
-import time
+import numpy as np
+from dataclasses import dataclass
+from typing import Dict
 
-# --- Initialize Flask App ---
-app = Flask(__name__)
+# --- Configuration Constants ---
+SENSOR_WEIGHTS: Dict[str, float] = {"audio": 1.0, "spo2": 2.5, "breathing": 1.5}
+TOTAL_WEIGHT: float = sum(SENSOR_WEIGHTS.values())
+RISK_THRESHOLDS: Dict[str, float] = {"safe_max": 0.67, "medium_max": 1.33, "high_min": 1.33}
+SPO2_THRESHOLDS: Dict[str, int] = {"high_max": 92, "safe_min": 95}
+BREATHING_THRESHOLDS_3_TO_7_YRS: Dict[str, int] = {"safe_max": 34, "medium_max": 40}
 
-# --- ================================================ ---
-# --- SUPABASE PLACEHOLDER FUNCTIONS                 ---
-# --- ================================================ ---
-# --- Replace these functions with your actual Supabase client calls ---
+# --- Data Structure for the Output ---
+@dataclass
+class FusionOutput:
+    """A structured representation of the fusion system's final assessment."""
+    final_risk: str
+    risk_score: float
+    confidence: float
+    reasoning: str
+    individual_risks: Dict[str, int]
+    spo2_was_critical: bool
 
-def get_latest_sensor_data_from_supabase():
+# --- Classification Functions ---
+def classify_spo2(spo2_value: float) -> int:
+    """Classifies SpO2 value into a risk level (0=Safe, 1=Medium, 2=High)."""
+    if spo2_value <= SPO2_THRESHOLDS["high_max"]:
+        return 2  # High risk
+    elif spo2_value < SPO2_THRESHOLDS["safe_min"]:
+        return 1  # Medium risk
+    else:
+        return 0  # Safe
+
+def classify_breathing_rate(bpm: float) -> int:
+    """Classifies breathing rate for a 3-7 year old into a risk level."""
+    if bpm > BREATHING_THRESHOLDS_3_TO_7_YRS["medium_max"]:
+        return 2  # High risk
+    elif bpm > BREATHING_THRESHOLDS_3_TO_7_YRS["safe_max"]:
+        return 1  # Medium risk
+    else:
+        return 0  # Safe
+
+# --- Main Fusion Logic ---
+def hybrid_fusion(audio_risk: int, spo2_value: float, bpm: float) -> FusionOutput:
     """
-    PLACEHOLDER: Fetches the latest sensor readings from your Supabase table.
-    In reality, you will use the supabase-py library to query your database.
+    Calculates the final asthma risk by fusing weighted inputs from multiple sensors.
+    Includes a critical override for low SpO2.
     """
-    print("-> PLACEHOLDER: Fetching latest data from Supabase...")
-    # This is mock data. Your actual function will run a query.
-    # e.g., data = supabase.table('sensor_readings').select('*').order('timestamp', desc=True).limit(1).execute()
-    mock_data = {
-        "audio_risk_level": 1, # 0="SAFE", 1="MEDIUM", 2="HIGH"
-        "spo2_percent": 96.5,
-        "breathing_rate_bpm": 38
-    }
-    return mock_data
+    # 1. Classify raw sensor values into risk categories (0, 1, 2)
+    spo2_risk = classify_spo2(spo2_value)
+    breathing_risk = classify_breathing_rate(bpm)
+    individual_risks = {"audio": audio_risk, "spo2": spo2_risk, "breathing": breathing_risk}
 
-def save_assessment_to_supabase(result: FusionOutput, inputs: dict):
-    """
-    PLACEHOLDER: Saves the final assessment result back to a Supabase table.
-    """
-    print(f"-> PLACEHOLDER: Saving assessment to Supabase...")
-    
-    # Prepare the data object to be saved
-    record_to_save = {
-        "timestamp": time.time(),
-        "final_risk": result.final_risk,
-        "risk_score": result.risk_score,
-        "confidence": result.confidence,
-        "reasoning": result.reasoning,
-        "spo2_was_critical": result.spo2_was_critical,
-        **result.individual_risks, # adds audio, spo2, breathing keys
-        "raw_spo2_input": inputs['spo2'],
-        "raw_bpm_input": inputs['bpm']
-    }
-    
-    print(f"   Data that would be saved: {record_to_save}")
-    # In reality, you'd do:
-    # e.g., supabase.table('risk_assessments').insert(record_to_save).execute()
-    return True
+    # 2. Safety Guardrail: Critical SpO2 overrides all other logic
+    if spo2_risk == 2:
+        reasoning = "CRITICAL OVERRIDE: SpO2 at or below 92% triggered the safety guardrail."
+        return FusionOutput(
+            final_risk="HIGH",
+            risk_score=2.0,
+            confidence=0.95,
+            reasoning=reasoning,
+            individual_risks=individual_risks,
+            spo2_was_critical=True
+        )
 
-# --- ================================================ ---
-# --- API ENDPOINTS                                  ---
-# --- ================================================ ---
-
-@app.route('/api/assess-risk', methods=['POST'])
-def assess_risk_endpoint():
-    """
-    This is the main endpoint that will be called every 30 seconds.
-    It gets data, runs the fusion logic, saves the result, and returns it.
-    """
-    print("\nReceived new request to /api/assess-risk")
-    
-    # Step 1: Get data from Supabase (using placeholder)
-    sensor_data = get_latest_sensor_data_from_supabase()
-    
-    # Extract values for processing
-    audio_risk = sensor_data.get("audio_risk_level")
-    spo2_value = sensor_data.get("spo2_percent")
-    bpm = sensor_data.get("breathing_rate_bpm")
-
-    # Basic validation
-    if any(v is None for v in [audio_risk, spo2_value, bpm]):
-        return jsonify({"error": "Missing required sensor data in Supabase record"}), 400
-
-    # Step 2: Run the hybrid fusion logic
-    fusion_result = hybrid_fusion(
-        audio_risk=audio_risk,
-        spo2_value=spo2_value,
-        bpm=bpm
+    # 3. Weighted Fusion Calculation
+    weighted_sum = (
+        (SENSOR_WEIGHTS["audio"] * audio_risk) +
+        (SENSOR_WEIGHTS["spo2"] * spo2_risk) +
+        (SENSOR_WEIGHTS["breathing"] * breathing_risk)
     )
+    risk_score = weighted_sum / TOTAL_WEIGHT
+
+    # 4. Determine final risk category based on the score
+    if risk_score >= RISK_THRESHOLDS["high_min"]:
+        final_risk = "HIGH"
+    elif risk_score > RISK_THRESHOLDS["safe_max"]:
+        final_risk = "MEDIUM"
+    else:
+        final_risk = "SAFE"
+
+    # 5. Calculate confidence score based on agreement between sensors
+    std_dev = np.std(list(individual_risks.values()))
+    confidence = max(0.5, 1.0 - (std_dev * 0.5))
     
-    # Step 3: Save the assessment result to Supabase (using placeholder)
-    raw_inputs = {'spo2': spo2_value, 'bpm': bpm}
-    save_assessment_to_supabase(fusion_result, raw_inputs)
-
-    # Step 4: Return the result as JSON to the caller (your dashboard)
-    # The dataclasses.asdict function easily converts the result object to a dictionary
-    return jsonify(asdict(fusion_result)), 200
-
-# A simple root route to check if the API is running
-@app.route('/')
-def home():
-    return "Asthma Risk Fusion API is running."
+    reasoning = f"Weighted fusion score of {risk_score:.2f} resulted in a {final_risk} risk assessment."
+    
+    return FusionOutput(
+        final_risk=final_risk,
+        risk_score=risk_score,
+        confidence=confidence,
+        reasoning=reasoning,
+        individual_risks=individual_risks,
+        spo2_was_critical=False
+    )
