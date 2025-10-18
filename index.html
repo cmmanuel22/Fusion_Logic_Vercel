@@ -1,0 +1,67 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asthma Risk Dashboard</title>
+    <style>
+        body { font-family: sans-serif; background-color: #f4f4f9; color: #333; }
+        .dashboard { max-width: 600px; margin: 40px auto; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; }
+        .metric { margin-bottom: 15px; }
+        .metric strong { display: inline-block; width: 120px; }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard">
+        <h1>Live Risk Assessment</h1>
+        <div class="metric"><strong>Final Risk:</strong> <span id="finalRisk">--</span></div>
+        <div class="metric"><strong>Risk Score:</strong> <span id="riskScore">--</span></div>
+        <div class="metric"><strong>Confidence:</strong> <span id="confidence">--</span></div>
+        <div class="metric"><strong>Reasoning:</strong> <span id="reasoning">--</span></div>
+    </div>
+
+    <script>
+        // This function calls your backend API
+        async function getRiskAssessment() {
+            // The URL path is just /api/assess-risk because the frontend and backend
+            // will be on the same domain once deployed to Vercel.
+            const apiUrl = '/api/assess-risk';
+
+            try {
+                console.log("Fetching new assessment...");
+                const response = await fetch(apiUrl, { method: 'POST' });
+
+                if (!response.ok) {
+                    console.error('API Error:', response.status);
+                    document.getElementById('reasoning').innerText = `Error: Server responded with status ${response.status}`;
+                    return;
+                }
+
+                const data = await response.json();
+                console.log('Received data:', data);
+
+                // --- UPDATE YOUR DASHBOARD HERE ---
+                document.getElementById('finalRisk').innerText = data.final_risk;
+                document.getElementById('riskScore').innerText = data.risk_score.toFixed(2);
+                document.getElementById('confidence').innerText = `${(data.confidence * 100).toFixed(0)}%`;
+                document.getElementById('reasoning').innerText = data.reasoning;
+
+            } catch (error) {
+                console.error('Failed to fetch risk assessment:', error);
+                document.getElementById('reasoning').innerText = "Failed to connect to the API.";
+            }
+        }
+
+        // --- Main Execution ---
+        // Run the function once immediately when the page loads
+        getRiskAssessment();
+
+        // Then, set it to run automatically every 30 seconds (30000 milliseconds)
+        setInterval(getRiskAssessment, 30000);
+    </script>
+</body>
+</html>
+
